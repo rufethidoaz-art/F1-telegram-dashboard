@@ -1,0 +1,23 @@
+# Secrets and env
+Token.txt
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+
+# Virtual environments
+.venv/
+venv/
+
+# Logs and caches
+*.log
+f1_cache/
+temp_charts/
+
+# OS files
+.DS_Store
+Thumbs.db
