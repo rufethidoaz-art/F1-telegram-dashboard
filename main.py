@@ -1654,7 +1654,7 @@ async def standings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     standings_data = await dashboard.get_championship_standings()
     text = dashboard.format_standings(standings_data if standings_data else [])
 
-    await safe_reply(update, text)
+    await safe_reply(update, text, parse_mode=ParseMode.HTML)
 
 async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show the full weekend schedule in the event's local time."""
