@@ -3,8 +3,10 @@ from __future__ import annotations
 import logging
 import asyncio
 import math
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 from typing import Dict, List, Optional, Set, Any, Union, cast
+from flask import Flask
+from threading import Thread
 import aiohttp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -1797,11 +1799,29 @@ def add_handlers(application: Application):
     # Callback query handler (for buttons)
     application.add_handler(CallbackQueryHandler(button_callback))
 
-async def main():
+# --- Web Server for Replit Uptime ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "F1 Bot is alive!"
+
+def run_web_server():
+  app.run(host='0.0.0.0', port=8080)
+
+def start_web_server_thread():
+    t = Thread(target=run_web_server)
+    t.daemon = True
+    t.start()
+
+def main():
     """Main function to run the bot (for direct execution)."""
-    # This is for local testing. For deployment, use the new main.py
     from dotenv import load_dotenv
     import os
+
+    # Start the web server in a background thread for uptime monitoring
+    start_web_server_thread()
+
     load_dotenv()
     TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     if not TOKEN:
@@ -1809,7 +1829,7 @@ async def main():
 
     application = Application.builder().token(TOKEN).build()
     add_handlers(application)
-    await application.run_polling()
+    application.run_polling()
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()
