@@ -1097,6 +1097,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def update_dashboard_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, session_key: int):
     """Background task to update the dashboard (unchanged)"""
     try:
+        # Add a small initial delay to allow users to see the "Live data started" message.
+        await asyncio.sleep(3)
+
         while True:
             try:
                 # Fetch all data
