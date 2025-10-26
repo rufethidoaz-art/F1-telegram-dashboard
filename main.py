@@ -3,20 +3,8 @@ from __future__ import annotations
 import logging
 import asyncio
 import math
-import aiohttp
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Set, Any, Union, cast
-import asyncio
-import logging
-import aiohttp
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, Message
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    JobQueue
-)
 import aiohttp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -40,8 +28,8 @@ import json
 # API Base URLs
 OPENF1_API = "https://api.openf1.org/v1"
 JOLPICA_API = "https://api.jolpi.ca/ergast/f1/" 
-# Community-maintained F1 calendar (raw JSON on GitHub)
-F1_CALENDAR_API = "https://raw.githubusercontent.com/sportstimes/f1/main/_db/f1/2025.json"
+# Community-maintained F1 calendar (raw JSON on GitHub) - now with dynamic year
+F1_CALENDAR_API_TEMPLATE = "https://raw.githubusercontent.com/sportstimes/f1/main/_db/f1/{year}.json"
 
 # Tyre compound emojis
 TYRE_COMPOUNDS = {
@@ -508,6 +496,9 @@ class F1LiveDashboard:
         Returns a dict with keys: meeting_info (dict) and sessions (List[Dict]) or None if not found.
         """
         try:
+            # Dynamically determine the calendar URL for the current year
+            current_year = date.today().year
+            calendar_url = F1_CALENDAR_API_TEMPLATE.format(year=current_year)
             # Return cached calendar result if still fresh (1 hour)
             if self.calendar_cache and self.last_calendar_fetch and \
                (datetime.now() - self.last_calendar_fetch).total_seconds() < 3600:
@@ -517,7 +508,7 @@ class F1LiveDashboard:
                 # ensure session exists
                 await self.init_session()
 
-            async with self.session.get(F1_CALENDAR_API) as resp:
+            async with self.session.get(calendar_url) as resp:
                 if resp.status != 200:
                     logger.warning(f"Calendar API returned status {resp.status}")
                     return None
@@ -1077,43 +1068,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Fetch next meeting to show which country/weekend is upcoming
-    next_meeting = None
-    try:
-        next_meeting = await dashboard.get_next_race_meeting()
-    except Exception:
-        next_meeting = None
-
-    meeting_line = ""
-    if next_meeting:
-        meeting_name = next_meeting.get('meeting_name') or next_meeting.get('raceName')
-        country = next_meeting.get('country_name') or next_meeting.get('Circuit', {}).get('Location', {}).get('country')
-        if meeting_name and country:
-            meeting_line = f"\n\n⏭️ Upcoming: <b>{meeting_name}</b> — {country}"
-
-    welcome_text = (
-        "🏎️ <b>F1 Live Dashboard</b> — Tap a button to start\n\n"
-        "Get real-time race updates, standings and commentary.\n"
-        "Use the buttons below to control the bot and view schedules."
-        f"{meeting_line}"
-    )
-
     message = get_message(update)
     if message:
-        await safe_reply(update, welcome_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+        await safe_reply(update, "🏎️ <b>F1 Live Dashboard</b>\n\nWelcome! Use the buttons below to get live F1 data.", parse_mode=ParseMode.HTML, reply_markup=reply_markup)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Help command handler"""
     help_text = (
         "📖 <b>F1 Live Dashboard - Help</b>\n\n"
         "<b>Commands:</b>\n"
-        "/start - Show main menu (and enable session alerts)\n"
-        "/live - Start live timing updates (shows last completed session if none is live)\n"
+        "/start - Show main menu\n"
+        "/live - Start live timing updates\n"
         "/stop - Stop live updates\n"
-        "/racecontrol - View recent race control messages\n"
-    "/racecontrol - View recent race control messages (or press Commentary for live commentary and overtakes)\n"
-        "/standings - View driver championship standings\n"
-        "/schedule - View the weekend session times (Local Time)\n"
+        "/commentary - View recent events and start live commentary\n"
+        "/standings - View current driver championship standings\n"
+        "/schedule [tz] - View weekend schedule (e.g., `/schedule utc-5`)\n"
         "\n<b>Data Sources:</b>\n"
         "• **Live Timing/Weather/Circuit:** OpenF1\n"
         "• **Lineup/Standings/History (Reliable):** Jolpica-F1\n"
@@ -1225,7 +1194,10 @@ async def commentary_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int, sess
                     # Helper to map numeric driver to 3-letter code
                     def code_for_num(n: int) -> str:
                         try:
-                            return dashboard.dynamic_driver_abbr.get(int(n), f"DR{n}")
+                            num = int(n)
+                            return dashboard.dynamic_driver_abbr.get(num, f"DR{num}")
+                        except (ValueError, TypeError):
+                            return str(n) # Return original string if not a number
                         except Exception:
                             return f"DR{n}"
 
@@ -1263,11 +1235,11 @@ async def commentary_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int, sess
                         # If structured numeric driver ids are present
                         try:
                             if isinstance(a, (int, str)) and isinstance(b, (int, str)):
-                                a_code = code_for_num(int(a))
-                                b_code = code_for_num(int(b))
+                                a_code = code_for_num(a)
+                                b_code = code_for_num(b)
                                 lapn = find_lap(ev_text, ev)
                                 if lapn:
-                                    formatted = f"🔁 <b>Overtake</b>\n{a_code} overtook {b_code} on lap {lapn}"
+                                    formatted = f"🔁 <b>Overtake (L{lapn})</b>\n{a_code} overtook {b_code}"
                                 else:
                                     formatted = f"🔁 <b>Overtake</b>\n{a_code} overtook {b_code}"
                         except Exception:
@@ -1281,7 +1253,7 @@ async def commentary_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int, sess
                                 b_code = code_for_num(int(m.group(2)))
                                 lapn = find_lap(ev_text, ev)
                                 if lapn:
-                                    formatted = f"🔁 <b>Overtake</b>\n{a_code} overtook {b_code} on lap {lapn}"
+                                    formatted = f"🔁 <b>Overtake (L{lapn})</b>\n{a_code} overtook {b_code}"
                                 else:
                                     formatted = f"🔁 <b>Overtake</b>\n{a_code} overtook {b_code}"
 
@@ -1292,7 +1264,7 @@ async def commentary_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int, sess
                         code = None
                         try:
                             if isinstance(dn, (int, str)):
-                                code = code_for_num(int(dn))
+                                code = code_for_num(dn)
                         except Exception:
                             code = None
                         if not code:
@@ -1311,7 +1283,7 @@ async def commentary_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int, sess
                         code = None
                         try:
                             if isinstance(dn, (int, str)):
-                                code = code_for_num(int(dn))
+                                code = code_for_num(dn)
                         except Exception:
                             code = None
                         if not code:
@@ -1689,8 +1661,12 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Determine which meeting schedule to show: the current (if upcoming) or the next one.
     meeting_info = None
     
+    # Check if a session is live first
+    latest_session = await dashboard.get_latest_session()
+    is_live = dashboard.is_session_live(latest_session)
+
     # Always find the next race for the schedule to avoid confusion.
-    await safe_reply(update, "⏳ Current session is over. Finding next race weekend...")
+    await safe_reply(update, "⏳ Finding next race weekend schedule...")
     next_meeting = await dashboard.get_next_race_meeting()
     if next_meeting:
         meeting_info = next_meeting # Switch context to the next meeting
@@ -1732,15 +1708,13 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not meeting_key:
         # Try fallback to community calendar JSON if OpenF1 meeting_key is not available
-        cal = await self.get_weekend_sessions_calendar() if False else None
-        # Note: call dashboard.get_weekend_sessions_calendar() instead of self in this scope
-        cal = await dashboard.get_weekend_sessions_calendar()
+        cal = await dashboard.get_weekend_sessions_calendar() # Corrected call
         if cal:
-            meeting_info = cal.get('meeting_info', {})
+            meeting_info_cal = cal.get('meeting_info', {})
             sessions = cal.get('sessions', [])
             # Attach the requested timezone offset for formatting
-            meeting_info['tz_offset'] = tz_offset
-            text = dashboard.format_schedule(sessions, meeting_info)
+            meeting_info_cal['tz_offset'] = tz_offset
+            text = dashboard.format_schedule(sessions, meeting_info_cal)
             await safe_reply(update, text)
             return
         else:

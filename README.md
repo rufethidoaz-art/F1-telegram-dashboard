@@ -1,53 +1,89 @@
-# F1 Bot
+# F1 Telegram Dashboard Bot
 
-This folder contains the F1 Telegram bot source. The bot connects to Telegram via polling and fetches live timing/schedule data.
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 
-Important files
-- `Appnewapi.py` — main bot entrypoint
-- `message_utils.py` — helper utilities for replies
-- `requirements.txt` — Python dependencies
-- `Token.txt` — (DO NOT COMMIT) contains your bot token, or set `TELEGRAM_TOKEN` env var instead
+A comprehensive Telegram bot for Formula 1 fans, providing real-time race data, championship standings, weekend schedules, and live commentary.
 
-Files created to help deployment
-- `.replit` — run configuration for Replit
-- `Procfile` — worker declaration for Heroku (if you use Heroku)
-- `.env.example` — example env file showing the expected variable
+This bot leverages multiple APIs to deliver a rich F1 experience directly to your Telegram chat.
 
-What to include in the GitHub repo
-- Include: all `.py` source files, `requirements.txt`, `README.md`, any deployment files (`Dockerfile`, `Procfile`) and tests.
-- Exclude: `Token.txt`, `.env`, virtualenv folders like `.venv/` or `venv/`, caches (`f1_cache/`, `temp_charts/`), logs. Your `.gitignore` already lists these.
+<!-- Optional: Add a screenshot or GIF of the bot in action -->
+<!-- ![Bot Demo GIF](link_to_your_gif.gif) -->
 
-Quick local setup (Windows PowerShell)
-```powershell
-cd "D:\rufet\Documents\F1 bot\F1bot"
-python -m venv .venv
-. .venv\Scripts\Activate.ps1
-pip install --upgrade pip
-pip install -r requirements.txt
-# provide token for this session (or create Token.txt)
-$env:TELEGRAM_TOKEN = Get-Content .\Token.txt
-.venv\Scripts\python.exe Appnewapi.py
-```
+## Features
 
-GitHub push (safe)
-```powershell
-# ensure Token.txt is ignored
-git rm --cached Token.txt 2>$null || $null
-git add .
-git commit -m "Add bot source; Token.txt ignored"
-# push to GitHub as usual (use gh CLI or web to create repo)
-```
+- **🏎️ Live Race Dashboard**: Get a real-time overview of the race, including driver positions, lap times, gaps, and current tyre compounds.
+- **💬 Live Commentary**: Receive automated updates for key events like overtakes, pit stops, retirements, and official Race Control messages (yellow/red flags, penalties, etc.).
+- **🏆 Championship Standings**: View the latest driver standings for the current season.
+- **🗓️ Weekend Schedule**: Check the schedule for the upcoming race weekend, with session times automatically converted to your local timezone (or a timezone of your choice).
+- **🏁 Last Race Results**: Quickly see the podium finishers and fastest lap from the most recently completed race.
+- **📊 Historical Data**: View past winners and pole position records for the upcoming circuit.
+- **▶️ Demo Mode**: See the bot in action with a simulated live race, perfect for testing or showcasing features between race weekends.
 
-Deploy to Replit (recommended for quick hosting/testing)
-1. Create a new Repl and import from GitHub (or create a new Repl and `git clone` your repo).
-2. Open the Repl settings → Secrets (lock icon) and add `TELEGRAM_TOKEN` with your bot token.
-3. Ensure `.replit` has `run = "python Appnewapi.py"` (this repo includes it).
-4. Install requirements once using the Shell: `pip install -r requirements.txt`.
-5. Start the Repl. For production/always-on, upgrade to Replit paid plan and enable "Always On" in the Repl settings.
+## Data Sources
 
-Notes and best practices
-- Keep the repo private if you don't want to expose your code or risk leaking the token.
-- If the token is ever pushed to a public location, revoke it in BotFather immediately and create a new one.
-- Prefer environment variables (TELEGRAM_TOKEN) over `Token.txt` on production hosts.
+This bot relies on fantastic community-driven and public APIs:
 
-If you want, I can also add a `Dockerfile` and `docker-compose.yml`, or a `systemd` unit file for VPS deployment. Tell me which one you prefer."
+- **[OpenF1](https://openf1.org/)**: Powers the live timing, car data, and race control messages.
+- **[Jolpica-F1 (Ergast-compatible)](https://github.com/jolpica/jolpica-f1-api)**: Provides reliable driver standings, historical results, and race calendar information.
+- **[F1 Calendar JSON](https://github.com/sportstimes/f1)**: A community-maintained calendar used as a fallback for scheduling.
+
+## How to Use
+
+You can interact with the bot using simple commands or inline buttons.
+
+### Main Commands
+
+*   `/start` - Initializes the bot and shows the main menu.
+*   `/live` - Starts the live dashboard for the current F1 session. If no session is live, it provides other options.
+*   `/stop` - Stops all live updates in the chat.
+*   `/standings` - Displays the current driver championship standings.
+*   `/schedule` - Shows the session times for the upcoming race weekend.
+*   `/commentary` - Starts the live commentary feed for events and race control messages.
+*   `/help` - Shows a list of all available commands.
+
+### Inline Buttons
+
+The bot's messages include interactive buttons for easy navigation:
+
+- **🔴 Start Live Updates**: Begins the live timing dashboard.
+- **⏹️ Stop Updates**: Halts the live feed.
+- **💬 Commentary**: Toggles the live event commentary.
+- **🏆 Standings**: Fetches the latest championship standings.
+- **🗓️ Weekend Schedule**: Shows the upcoming weekend's schedule.
+
+## Running Your Own Instance
+
+If you want to run your own version of this bot, follow these steps:
+
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/rufethidoaz-art/F1-telegram-dashboard.git
+    cd F1-telegram-dashboard
+    ```
+
+2.  **Create a virtual environment:**
+    ```bash
+    python -m venv .venv
+    source .venv/bin/activate  # On Windows, use `.venv\Scripts\activate`
+    ```
+
+3.  **Install the dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+4.  **Create a `.env` file:**
+    Create a file named `.env` in the project's root directory and add your Telegram Bot Token, which you can get from BotFather.
+
+    ```
+    TELEGRAM_BOT_TOKEN="YOUR_TELEGRAM_BOT_TOKEN_HERE"
+    ```
+
+5.  **Run the bot:**
+    ```bash
+    python main.py
+    ```
+
+## License
+
+This project is open-source and available under the MIT License.

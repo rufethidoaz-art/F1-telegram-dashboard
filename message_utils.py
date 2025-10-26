@@ -1,57 +1,48 @@
 from __future__ import annotations
 
-from typing import Optional, Union, cast, Any
-from telegram import Update, Message, CallbackQuery, InlineKeyboardMarkup
-from telegram.constants import ParseMode
+from typing import Optional, Union
 
-def get_message(update: Update) -> Optional[Message]:
-    """Get the message object from an update, handling both direct messages and callbacks."""
-    if update.message:
-        return update.message
-    if update.callback_query and update.callback_query.message:
-        return cast(Message, update.callback_query.message)
-    return None
+from telegram import Update, Message, InlineKeyboardMarkup
+from telegram.error import BadRequest
+from telegram.ext import ContextTypes
+
 
 def get_chat_id(update: Update) -> Optional[int]:
-    """Get chat ID from an update, handling both direct messages and callbacks."""
-    message = get_message(update)
-    return message.chat.id if message and message.chat else None
-
-async def reply_text(
-    message: Message,
-    text: str,
-    parse_mode: str = ParseMode.HTML,
-    reply_markup: Optional[InlineKeyboardMarkup] = None,
-    **kwargs: Any,
-) -> Optional[Message]:
-    """Safely reply to a message with proper error handling.
-
-    Accepts additional keyword arguments (like reply_markup) and forwards them
-    to telegram's reply_text so callers can include inline keyboards.
-    """
-    if hasattr(message, "reply_text"):
-        try:
-            return await message.reply_text(
-                text, parse_mode=parse_mode, reply_markup=reply_markup, **kwargs
-            )
-        except Exception as e:
-            print(f"Error sending message: {e}")
+    """Safely get the chat_id from an update object."""
+    if update.effective_chat:
+        return update.effective_chat.id
     return None
+
+
+def get_message(update: Update) -> Optional[Message]:
+    """Safely get the message from an update object, whether it's a command or callback."""
+    return update.effective_message
+
 
 async def safe_reply(
     update: Update,
     text: str,
-    parse_mode: str = ParseMode.HTML,
     reply_markup: Optional[InlineKeyboardMarkup] = None,
-    **kwargs: Any,
+    **kwargs
 ) -> Optional[Message]:
-    """Safely reply to an update, handling both messages and callback queries.
-
-    Forwards optional reply_markup and extra kwargs to the underlying reply_text.
+    """
+    Safely reply to a message or edit the message from a callback query.
+    This prevents errors when a button is pressed.
     """
     message = get_message(update)
-    if message:
-        return await reply_text(
-            message, text, parse_mode=parse_mode, reply_markup=reply_markup, **kwargs
-        )
-    return None
+    if not message:
+        return None
+
+    try:
+        if update.callback_query:
+            return await update.callback_query.edit_message_text(text=text, reply_markup=reply_markup, **kwargs)
+        else:
+            return await message.reply_text(text=text, reply_markup=reply_markup, **kwargs)
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            # Ignore errors where the message content is the same
+            pass
+        else:
+            # For other errors, you might want to log them
+            print(f"Error sending message: {e}")
+            return None
