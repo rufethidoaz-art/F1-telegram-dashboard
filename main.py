@@ -205,9 +205,10 @@ class F1LiveDashboard:
             now_utc = datetime.now(timezone.utc)
             start = datetime.fromisoformat(date_start_str.replace('Z', '+00:00'))
             end = datetime.fromisoformat(date_end_str.replace('Z', '+00:00'))
+            pre_session_buffer = timedelta(minutes=15)
 
             # Session is live if now is between start and end time
-            return start <= now_utc <= end
+            return (start - pre_session_buffer) <= now_utc <= end
         except Exception as e:
             logger.warning(f"Error parsing session times for live check: {e}")
             return True # Fallback if parsing fails
@@ -1392,13 +1393,23 @@ async def live_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_reply(update, "❌ Error: Invalid session key")
 
     else:
-        # No live session: inform the user clearly and offer quick actions
+        # No live session: show last race results and offer other actions
+        await safe_reply(update, "⏳ No live session right now. Fetching last race results...")
+        last_race_summary = await dashboard.get_last_race_results_summary()
+        
+        if last_race_summary:
+            summary_text = dashboard.format_session_summary(last_race_summary)
+        else:
+            summary_text = "Could not fetch last race results."
+
+        full_message = f"⚠️ There is no live session right now.\n\n{summary_text}"
+
         keyboard = [
             [InlineKeyboardButton("🗓️ Weekend Schedule", callback_data="schedule"), InlineKeyboardButton("🏆 Standings", callback_data="standings")],
             [InlineKeyboardButton("▶️ Demo (Simulate)", callback_data="demo"), InlineKeyboardButton("❓ Help", callback_data="help")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await safe_reply(update, "⚠️ There is no live session right now. Use the buttons below to view the upcoming schedule or standings.", reply_markup=reply_markup)
+        await safe_reply(update, full_message, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
         return
 
 
