@@ -2,4 +2,5 @@ python-telegram-bot==20.7
 aiohttp
 python-dotenv
 Flask
+pip install python-telegram-bot aiohttp flask python-dotenv fastf1
 
