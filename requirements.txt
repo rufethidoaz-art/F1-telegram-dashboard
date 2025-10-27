@@ -1,4 +1,5 @@
-python-telegram-bot[ext]
+python-telegram-bot==20.7
 aiohttp
 python-dotenv
 Flask
+
