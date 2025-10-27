@@ -1,24 +1,14 @@
-from __future__ import annotations
-
-import logging
-import asyncio
-import math
-from datetime import datetime, timezone, timedelta, date
-from typing import Dict, List, Optional, Set, Any, Union, cast
-from flask import Flask
-from threading import Thread
-import aiohttp
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
     JobQueue,
+    Update,  # Moved here in v20+
+    InlineKeyboardButton,  # Moved here
+    InlineKeyboardMarkup,  # Moved here
 )
 from telegram.constants import ParseMode
-import re
-import json
 
 # Configure logging
 logging.basicConfig(
