@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 
 import json
 
+# Additional imports for FastF1 simulation in demo
+import fastf1
+import pandas as pd
+
 # API Base URLs
 OPENF1_API = "https://api.openf1.org/v1"
 JOLPICA_API = "https://api.jolpi.ca/ergast/f1/" 
@@ -35,12 +39,12 @@ F1_CALENDAR_API_TEMPLATE = "https://raw.githubusercontent.com/sportstimes/f1/mai
 
 # Tyre compound emojis
 TYRE_COMPOUNDS = {
-    "SOFT": "🔴",      # Red square
-    "MEDIUM": "🟡",     # Yellow circle
-    "HARD": "⚪",       # White circle
-    "INTERMEDIATE": "🔵", # Blue circle
-    "WET": "🟢",       # Green circle
-    "UNKNOWN": "⚫",     # Black circle (Fallback)
+    "SOFT": "🔴 Soft",      # Red square
+    "MEDIUM": "🟡 Medium",     # Yellow circle
+    "HARD": "⚪ Hard",       # White circle
+    "INTERMEDIATE": "🔵 Intermediate", # Blue circle
+    "WET": "🟢 Wet",       # Green circle
+    "UNKNOWN": "⚫ Unknown",     # Black circle (Fallback)
 }
 
 # Simple country to flag emoji map (limited set for F1 calendar)
@@ -91,6 +95,12 @@ class F1LiveDashboard:
         # Calendar cache (community JSON)
         self.calendar_cache: Optional[Dict] = None
         self.last_calendar_fetch: Optional[datetime] = None
+        # Add intervals cache for gaps
+        self.intervals_cache: Dict[int, Dict[int, str]] = {}
+        self.last_intervals_fetch: Optional[datetime] = None
+
+        # For FastF1 cache in demo
+        fastf1.Cache.enable_cache('fastf1_cache')  # Create a cache directory for FastF1
 
     @property
     def session(self) -> aiohttp.ClientSession:
@@ -455,12 +465,11 @@ class F1LiveDashboard:
         return "\n".join(lines)
 
 
-    # --- OpenF1 Live Timing Methods (Simplified for space, only relevant changes shown) ---
+    # --- OpenF1 Session Methods ---
 
     async def get_latest_session(self) -> Optional[Dict]:
         """
         Get the most recent F1 session, returning cached data if available.
-        (Remains mostly the same, ensuring we get the most recent session regardless of status)
         """
         if self.session_info_cache and self.last_session_fetch and \
            (datetime.now() - self.last_session_fetch).total_seconds() < 300:
@@ -769,12 +778,12 @@ class F1LiveDashboard:
         
         return "\n".join(lines)
 
-    # --- Live Timing and Formatting Methods (unchanged) ---
+    # --- OpenF1 Live Timing Methods ---
 
     async def get_live_timing(self, session_key: int) -> List[Dict]:
         """Fetches the latest position and status for all drivers in the session."""
         try:
-            url = f"{OPENF1_API}/position?session_key={session_key}&limit=20&order_by=-date"
+            url = f"{OPENF1_API}/position?session_key={session_key}"
             async with self.session.get(url) as resp:
                 if resp.status == 200:
                     positions = await resp.json()
@@ -797,7 +806,7 @@ class F1LiveDashboard:
         """Get the latest completed lap time for each driver."""
         # Implementation remains the same
         try:
-            url = f"{OPENF1_API}/laps?session_key={session_key}&order_by=-date_start&limit=50"
+            url = f"{OPENF1_API}/laps?session_key={session_key}"
             async with self.session.get(url) as resp:
                 if resp.status == 200:
                     laps = await resp.json()
@@ -819,7 +828,7 @@ class F1LiveDashboard:
         """Get the current tyre compound for each driver (latest stint)."""
         # Implementation remains the same
         try:
-            url = f"{OPENF1_API}/stints?session_key={session_key}&order_by=-lap_start&limit=50"
+            url = f"{OPENF1_API}/stints?session_key={session_key}"
             async with self.session.get(url) as resp:
                 if resp.status == 200:
                     stints = await resp.json()
@@ -833,6 +842,29 @@ class F1LiveDashboard:
         except Exception as e:
             logger.error(f"Error fetching stints: {e}")
         return {}
+
+    async def get_intervals(self, session_key: int) -> Dict[int, str]:
+        """Get the latest intervals (gaps) for each driver."""
+        if (not self.intervals_cache.get(session_key) or 
+            not self.last_intervals_fetch or 
+            (datetime.now() - self.last_intervals_fetch).total_seconds() > 15):
+            try:
+                url = f"{OPENF1_API}/intervals?session_key={session_key}"
+                async with self.session.get(url) as resp:
+                    if resp.status == 200:
+                        intervals = await resp.json()
+                        driver_intervals = {}
+                        for inter in intervals:
+                            driver_num = inter.get('driver_number')
+                            gap = inter.get('gap_to_leader')
+                            if driver_num and gap and driver_num not in driver_intervals:
+                                driver_intervals[driver_num] = gap
+                        self.intervals_cache[session_key] = driver_intervals
+                        self.last_intervals_fetch = datetime.now()
+            except Exception as e:
+                logger.error(f"Error fetching intervals: {e}")
+                return {}
+        return self.intervals_cache.get(session_key, {})
 
     async def get_fastest_lap(self, session_key: int) -> Optional[Dict]:
         """Determines the current fastest lap based on lap times."""
@@ -878,9 +910,10 @@ class F1LiveDashboard:
         lap_times: Dict[int, str],
         tyres: Dict[int, str],
         favorite: Optional[int] = None,
-        fastest_lap_data: Optional[Dict[str, Any]] = None
+        fastest_lap_data: Optional[Dict[str, Any]] = None,
+        intervals: Dict[int, str] = None  # New: real gaps
     ) -> str:
-        """Format the live dashboard message"""
+        """Format the live dashboard message with real gaps and all drivers."""
         # Get values with safe fallbacks
         race_name = session_info.get('meeting_name', 'F1 Race')
         circuit_name = session_info.get('circuit_short_name', 'Track')
@@ -964,10 +997,19 @@ class F1LiveDashboard:
                     pos_emoji = "🥇" if pos_num == 1 else ("🥈" if pos_num == 2 else ("🥉" if pos_num == 3 else "  "))
                 else:
                     pos_emoji = "  "
-                gap = f"+{pos_num * 0.5:.3f}" if pos_num > 1 else "+0.000"
             except (ValueError, TypeError):
                 pos_emoji = "  "
-                gap = "+?.???"
+
+            # Use real gap from intervals if available, else fallback
+            gap = "+?.???"
+            if intervals and driver_num in intervals:
+                gap = intervals[driver_num]
+                if isinstance(gap, (int, float)):
+                    gap = f"+{float(gap):.3f}"
+                elif 'LAP' in str(gap).upper():
+                    gap = str(gap)  # e.g., +1 LAP
+            elif pos_num > 1:
+                gap = f"+{pos_num * 0.5:.3f}"  # Old fallback
 
             # Safe dictionary access for lap time
             lap_time = "-:--.---"
@@ -990,14 +1032,13 @@ class F1LiveDashboard:
             compound = "UNKNOWN"
             if driver_num in tyres:
                 compound = tyres[driver_num]
-            tyre_emoji = TYRE_COMPOUNDS.get(compound, "⚫")
-            tyre_text = compound.capitalize()
+            tyre_text = TYRE_COMPOUNDS.get(compound, "⚫ Unknown")
             
             fl_indicator = "🟣" if driver_num == fastest_lap_driver_num else "  "
 
             prefix = "➤ " if driver_num == favorite else ""
 
-            line = f"{prefix}{pos_emoji} <b>P{position:02}</b> {fl_indicator} {driver_abbr_code} | {gap} | {lap_time}{driver_lap_str} | {tyre_emoji} {tyre_text}"
+            line = f"{prefix}{pos_emoji} <b>P{position:02}</b> {fl_indicator} {driver_abbr_code} | {gap} | {lap_time}{driver_lap_str} | {tyre_text}"
             lines.append(line)
 
         lines.append("━━━━━━━━━━━━━━━━━━━━")
@@ -1039,6 +1080,7 @@ class F1LiveDashboard:
                 lines.append(f"   <i>{time_str} UTC</i>")
         
         return "\n".join(lines)
+
 
 # Global dashboard instance
 dashboard = F1LiveDashboard()
@@ -1095,7 +1137,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def update_dashboard_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, session_key: int):
-    """Background task to update the dashboard (unchanged)"""
+    """Background task to update the dashboard with real gaps and all drivers."""
     try:
         # Add a small initial delay to allow users to see the "Live data started" message.
         await asyncio.sleep(3)
@@ -1111,12 +1153,13 @@ async def update_dashboard_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int
                 positions = await dashboard.get_live_timing(session_key)
                 lap_times = await dashboard.get_lap_times(session_key)
                 tyres = await dashboard.get_stints(session_key)
+                intervals = await dashboard.get_intervals(session_key)  # New: fetch real gaps
                 fastest_lap_data = await dashboard.get_fastest_lap(session_key)
                 favorite = dashboard.user_favorites.get(chat_id)
 
                 if session_info:
                     text = dashboard.format_dashboard(
-                        session_info, positions, lap_times, tyres, favorite, fastest_lap_data
+                        session_info, positions, lap_times, tyres, favorite, fastest_lap_data, intervals
                     )
 
                     keyboard = [
@@ -1436,109 +1479,106 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def simulate_live_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int):
-    """Simulated live loop that generates fake positions and events for demo/testing."""
-    import random
-
+    """Simulated live loop using FastF1 historical data for demo/testing."""
     # CRITICAL: Ensure driver names are loaded before starting simulation
     await dashboard.get_live_driver_lineup()
 
-    # Create a small grid of 8 drivers for the demo
-    driver_nums = [11, 16, 1, 55, 44, 4, 81, 23] # PER, LEC, VER, SAI, HAM, NOR, PIA, ALB
-    # Use the main driver abbreviation mapping
-    driver_abbr = dashboard.dynamic_driver_abbr
-
-    # Initial positions (1..N)
-    # Ensure the initial list is sorted by position
-    random.shuffle(driver_nums)
-    positions = [{
-        'driver_number': n,
-        'position': i+1
-    } for i, n in enumerate(driver_nums)]
-
-    lap_times = {n: "1:30.000" for n in driver_nums}
-    tyres = {n: 'SOFT' for n in driver_nums}
-    
-    # Lap counter
-    current_lap = 1
-    total_laps = 51
-
     try:
-        while True:
-            # Randomly shuffle a little to simulate overtakes
-            if random.random() < 0.4:
-                # swap two adjacent drivers
-                i = random.randint(0, len(positions)-2)
-                # Swap the driver numbers, but keep the positions static (1, 2, 3...)
-                positions[i]['driver_number'], positions[i+1]['driver_number'] = positions[i+1]['driver_number'], positions[i]['driver_number'] 
+        # Load a historical session (e.g., Mexico 2025 Race) - run synchronously in executor
+        year = 2025
+        gp = 'Mexico'
+        session_type = 'R'
+        session = await asyncio.get_event_loop().run_in_executor(None, lambda: fastf1.get_session(year, gp, session_type))
+        await asyncio.get_event_loop().run_in_executor(None, lambda: session.load(telemetry=True, laps=True, weather=True))
 
-            # Update lap times slightly
-            for n in driver_nums:
-                base = 90 + random.random() * 5
-                lap_times[n] = f"{int(base//60)}:{(base%60):05.3f}"
+        laps = session.laps
+        max_laps = int(laps['LapNumber'].max())
 
-            # Format a fake session_info with lap counter
+        # Function to format lap time as MM:SS.mmm
+        def format_lap_time(lap_time):
+            if pd.isna(lap_time):
+                return '1:31.000'  # Fallback
+            seconds = lap_time.total_seconds()
+            minutes = int(seconds // 60)
+            seconds = seconds % 60
+            return f"{minutes}:{seconds:06.3f}"
+
+        for lap in range(1, max_laps + 1):
+            # Get lap data for current lap
+            current_laps = laps[laps['LapNumber'] == lap]
+            if current_laps.empty:
+                continue
+
+            # Sort by position
+            current_laps = current_laps.sort_values('Position')
+            if current_laps['Position'].isnull().all():
+                current_laps = current_laps.sort_values('LapTime')  # Fallback
+
+            # Build positions list for format_dashboard
+            positions = []
+            for idx, row in current_laps.iterrows():
+                driver_num = int(row['DriverNumber']) if pd.notnull(row['DriverNumber']) else idx + 1
+                position = int(row['Position']) if pd.notnull(row['Position']) else idx + 1
+                positions.append({
+                    'driver_number': driver_num,
+                    'position': position
+                })
+
+            # Lap times dict
+            lap_times = {}
+            for idx, row in current_laps.iterrows():
+                driver_num = int(row['DriverNumber']) if pd.notnull(row['DriverNumber']) else idx + 1
+                lap_time = row['LapTime']
+                lap_times[driver_num] = format_lap_time(lap_time)
+
+            # Tyres dict
+            tyres = {}
+            for idx, row in current_laps.iterrows():
+                driver_num = int(row['DriverNumber']) if pd.notnull(row['DriverNumber']) else idx + 1
+                compound = row.get('Compound', 'UNKNOWN').upper()
+                tyres[driver_num] = compound
+
+            # Leader's lap time for gaps
+            leader_lap = current_laps.iloc[0]['LapTime'] if not current_laps.empty else pd.Timedelta(0)
+
+            # Intervals (gaps) dict
+            intervals = {}
+            for idx, row in current_laps.iterrows():
+                driver_num = int(row['DriverNumber']) if pd.notnull(row['DriverNumber']) else idx + 1
+                lap_time = row['LapTime']
+                gap_sec = (lap_time - leader_lap).total_seconds() if pd.notnull(lap_time) else 0.0
+                intervals[driver_num] = f"{gap_sec:.3f}"
+
+            # Fastest lap (for the whole session up to now)
+            fastest_lap_data = await dashboard.get_fastest_lap(session_key=None)  # Placeholder, or calculate from laps
+
+            # Session info for demo
             session_info = {
-                'meeting_name': 'Demo Replay - Historic Race',
-                'circuit_short_name': 'Demo Circuit',
-                'session_name': f'Simulated Live - Lap {current_lap}/{total_laps}'
+                'meeting_name': 'Demo Replay - Mexico 2025',
+                'circuit_short_name': 'Mexico City',
+                'session_name': 'Race'
             }
-            
-            # Increment lap counter
-            current_lap += 1
-            if current_lap > total_laps:
-                current_lap = 1  # Reset for continuous demo
 
-            # Use existing formatter to build text
-            # CRITICAL: Sort positions before formatting, just like the real live timing
-            sorted_positions = sorted(positions, key=lambda p: p['position'])
-            
-            text = dashboard.format_dashboard(session_info, sorted_positions, lap_times, tyres, None, None)
+            text = dashboard.format_dashboard(
+                session_info, positions, lap_times, tyres, None, fastest_lap_data, intervals
+            )
 
-            # Small keyboard for demo
-            kb = [
-                [InlineKeyboardButton("⏹️ Stop Updates", callback_data="stop"), InlineKeyboardButton("💬 Commentary", callback_data="commentary")],
+            keyboard = [
+                [InlineKeyboardButton("⏹️ Stop Updates", callback_data="stop"),
+                 InlineKeyboardButton("💬 Commentary", callback_data="commentary")],
             ]
-            reply_markup = InlineKeyboardMarkup(kb)
+            reply_markup = InlineKeyboardMarkup(keyboard)
 
-            try:
-                await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-            except Exception:
-                # Fallback: send as a new message
-                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML
+            )
 
-            # Randomly create demo events
-            if random.random() < 0.25:
-                ev = {
-                    'type': '⚔️ Overtake',
-                    'description': f"{driver_abbr.get(random.choice(driver_nums), 'DR?')} overtook {driver_abbr.get(random.choice(driver_nums), 'DR?')}"
-                }
-                await context.bot.send_message(chat_id=chat_id, text=f"<b>{ev['type']}</b>: {ev['description']}", parse_mode=ParseMode.HTML)
+            await asyncio.sleep(2)  # Simulate update delay
 
-            if random.random() < 0.1:
-                ev = {'type': 'Pit Stop', 'description': f"{driver_abbr.get(random.choice(driver_nums), 'DR?')} pitted for new tyres"}
-                await context.bot.send_message(chat_id=chat_id, text=f"🛠️ <b>{ev['type']}</b>\n{ev['description']}", parse_mode=ParseMode.HTML)
-
-            # Randomly create race control messages
-            if random.random() < 0.15:
-                driver = driver_abbr.get(random.choice(driver_nums), 'DR?')
-                messages = [
-                    (f"🟨 YELLOW FLAG - SECTOR {random.randint(1,3)}", f"Car stopped on track"),
-                    ("🚔 SAFETY CAR DEPLOYED", "Incident involving multiple cars"),
-                    ("🚦 VIRTUAL SAFETY CAR", "Debris on track"),
-                    ("⚠️ 5 SECOND PENALTY", f"Car {driver} - Causing a collision"),
-                    ("ℹ️ LAP TIME DELETED", f"Car {driver} - Exceeding track limits at Turn {random.randint(1, 15)}"),
-                    ("🟩 GREEN FLAG", "Track is clear"),
-                ]
-                title, desc = random.choice(messages)
-                
-                # Send as a separate message to mimic race control alerts
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=f"<b>{title}</b>\n{desc}",
-                    parse_mode=ParseMode.HTML
-                )
-
-            await asyncio.sleep(5)
     except asyncio.CancelledError:
         logger.info(f"Simulation loop cancelled for chat {chat_id}")
 
